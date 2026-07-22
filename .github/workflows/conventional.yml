@@ -31,4 +31,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🔍 Lint commit messages
-        uses: webiny/action-conventional-commits@v1.3.0
+        uses: webiny/action-conventional-commits@v1.4.2
