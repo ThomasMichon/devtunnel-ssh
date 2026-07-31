@@ -22,6 +22,15 @@ internal static class Program
 
         if (args.Length < 1)
         {
+            // When wired in as the OpenSSH DefaultShell (opt-in `dtssh shell
+            // install`), sshd invokes us BARE — no subcommand, no command option —
+            // for an INTERACTIVE session (it only appends DefaultShellCommandOption
+            // for exec/`ssh host "cmd"`). Route that to the headless shell shim so
+            // the real interactive shell launches. A bare `dtssh` at a terminal
+            // still prints usage. Heuristic: an SSH session sets SSH_CONNECTION.
+            if (Environment.GetEnvironmentVariable("SSH_CONNECTION") is not null)
+                return await ShellCommand.RunAsync([]);
+
             PrintUsage();
             return 2;
         }
@@ -43,6 +52,7 @@ internal static class Program
                 case "connect": return await ConnectCommand.RunAsync(rest);
                 case "config": return await ConfigCommand.RunAsync(rest);
                 case "doctor": return await DoctorCommand.RunAsync(rest);
+                case "shell": return await ShellCommand.RunAsync(rest);
                 case "version" or "--version" or "-v":
                     Console.WriteLine($"dtssh {Version}");
                     return 0;
@@ -91,6 +101,8 @@ CLIENT COMMANDS (run on the machine you connect from):
 UTILITIES:
     config      Print an ssh_config block for a tunnel.
     doctor      Check that devtunnel/ssh/sshd are available.
+    shell       (Windows, opt-in) Headless DefaultShell shim that suppresses the
+                console window Windows pops for each non-PTY exec against a host.
     version     Print version.
 
 EXAMPLES:
