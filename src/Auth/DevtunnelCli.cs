@@ -43,6 +43,9 @@ internal static class DevtunnelCli
     private static readonly Dictionary<string, string> DownloadUrls = new()
     {
         ["windows/x64"] = "https://aka.ms/TunnelsCliDownload/win-x64",
+        // Microsoft does not publish a native Windows ARM64 CLI; use the x64
+        // build through Windows' built-in x64 emulation.
+        ["windows/arm64"] = "https://aka.ms/TunnelsCliDownload/win-x64",
         ["osx/arm64"] = "https://aka.ms/TunnelsCliDownload/osx-arm64-zip",
         ["osx/x64"] = "https://aka.ms/TunnelsCliDownload/osx-x64-zip",
         ["linux/x64"] = "https://aka.ms/TunnelsCliDownload/linux-x64",

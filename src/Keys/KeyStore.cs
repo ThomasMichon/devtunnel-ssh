@@ -4,8 +4,8 @@ using Dtssh.Infra;
 namespace Dtssh.Keys;
 
 // Manages the on-disk SSH identities dtssh uses. Keys are generated with the
-// system `ssh-keygen` (present wherever OpenSSH is installed), guaranteeing the
-// files are in a format the local ssh/sshd binaries accept.
+// OpenSSH `ssh-keygen`, guaranteeing the files are in a format the local
+// ssh/sshd binaries accept.
 //
 // Ported from the Go internal/keys package; paths and semantics are unchanged.
 internal readonly record struct KeyPair(string PrivatePath, string PublicPath)
@@ -22,18 +22,20 @@ internal static class KeyStore
     {
         Paths.EnsureDir(Paths.ClientDir());
         var priv = Path.Combine(Paths.ClientDir(), "id_ed25519");
-        return await EnsureAsync(priv, "dtssh-client", ct).ConfigureAwait(false);
+        return await EnsureAsync(priv, "dtssh-client", null, ct).ConfigureAwait(false);
     }
 
     // The dedicated sshd host key. Generated on first use.
-    public static async Task<KeyPair> EnsureHostKeyAsync(CancellationToken ct = default)
+    public static async Task<KeyPair> EnsureHostKeyAsync(
+        string? sshKeygenPath = null, CancellationToken ct = default)
     {
         Paths.EnsureDir(Paths.HostDir());
         var priv = Path.Combine(Paths.HostDir(), "ssh_host_ed25519_key");
-        return await EnsureAsync(priv, "dtssh-host", ct).ConfigureAwait(false);
+        return await EnsureAsync(priv, "dtssh-host", sshKeygenPath, ct).ConfigureAwait(false);
     }
 
-    private static async Task<KeyPair> EnsureAsync(string privPath, string comment, CancellationToken ct)
+    private static async Task<KeyPair> EnsureAsync(
+        string privPath, string comment, string? sshKeygenPath, CancellationToken ct)
     {
         var pair = new KeyPair(privPath, privPath + ".pub");
         if (FileExists(pair.PrivatePath) && FileExists(pair.PublicPath))
@@ -43,7 +45,7 @@ internal static class KeyStore
         TryDelete(pair.PrivatePath);
         TryDelete(pair.PublicPath);
 
-        var kg = Proc.Which("ssh-keygen")
+        var kg = sshKeygenPath ?? Proc.Which("ssh-keygen")
             ?? throw new DtsshException("ssh-keygen not found in PATH: install OpenSSH");
 
         var res = await Proc.RunAsync(kg,

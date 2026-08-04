@@ -27,8 +27,9 @@ irm https://raw.githubusercontent.com/bmiddha/devtunnel-ssh/main/scripts/install
 
 This downloads a prebuilt binary from the latest
 [GitHub Release](https://github.com/bmiddha/devtunnel-ssh/releases). You also
-need OpenSSH (`ssh`; plus `sshd` on the host); the `devtunnel` CLI is
-auto-downloaded on first use.
+need OpenSSH (`ssh`; plus `sshd` on Linux/macOS hosts). On Windows, dtssh
+downloads a pinned portable Win32-OpenSSH build on first host startup. The
+`devtunnel` CLI is auto-downloaded on first use.
 
 ## Use it
 

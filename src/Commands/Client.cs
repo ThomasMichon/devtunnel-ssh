@@ -235,6 +235,10 @@ internal static class DoctorCommand
         Report(ok, bad, "ssh-keygen");
 
         try { Console.WriteLine($"{ok}sshd: {Sshd.SshdPath()}"); }
+        catch (Exception) when (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine($"{ok}sshd: portable OpenSSH (downloaded on first host start)");
+        }
         catch (Exception e) { Console.WriteLine($"{bad}sshd: {e.Message} (needed only on the host)"); }
 
         Console.WriteLine($"  data dir:  {Paths.DataRoot()}");

@@ -63,7 +63,7 @@ internal static class HostCommand
         {
             var cfg = await Sshd.PrepareAsync(port, clientPub, ct).ConfigureAwait(false);
             await cfg.ValidateAsync(ct).ConfigureAwait(false);
-            var hk = await KeyStore.EnsureHostKeyAsync(ct).ConfigureAwait(false);
+            var hk = await KeyStore.EnsureHostKeyAsync(ct: ct).ConfigureAwait(false);
             hostPub = hk.ReadPublicKey();
             var (file, sargs) = cfg.Command();
             sshdProc = Proc.Spawn(file, sargs, "[sshd] ");
