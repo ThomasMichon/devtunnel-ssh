@@ -3,6 +3,26 @@
 All notable changes to this project are documented here. This file is generated
 from [Conventional Commits](https://www.conventionalcommits.org) by
 [git-cliff](https://git-cliff.org).
+## [0.2.0] ([compare](https://github.com/bmiddha/devtunnel-ssh/compare/v0.1.0...v0.2.0)) - 2026-08-04
+
+### 🚀 Features
+
+- *(host)* Download portable OpenSSH on Windows ([3246aa3](https://github.com/bmiddha/devtunnel-ssh/commit/3246aa3167dbea7ca1212a8de25959dab0948b61))
+
+### 🐛 Bug Fixes
+
+- *(installers)* Resolve "latest" via the releases API (incl. pre-releases) ([ae1d5eb](https://github.com/bmiddha/devtunnel-ssh/commit/ae1d5eb623870c0ff5f2af2c002390d33e7b6087))
+- *(host)* Suppress Windows SSH session consoles ([d239ac7](https://github.com/bmiddha/devtunnel-ssh/commit/d239ac7c4c41dec60e37e705b01e4f76194442e6))
+
+### 👷 CI & Build
+
+- Push the release tag with the App token ([fdbea88](https://github.com/bmiddha/devtunnel-ssh/commit/fdbea883f7be3e413b3ffcf94cfc48a87632b2b0))
+
+### ⚙️ Miscellaneous
+
+- Bump the nuget group with 1 update ([e67aaa5](https://github.com/bmiddha/devtunnel-ssh/commit/e67aaa555c67ba746011fe60cb67e43a8cd70298))
+
+
 ## [0.1.0] - 2026-07-11
 
 ### Dtssh
