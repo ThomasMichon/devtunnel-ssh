@@ -10,6 +10,7 @@ internal sealed record PortableSshd(string SshdPath, string SshKeygenPath, strin
 
 internal static class PortableSshdInstaller
 {
+    // renovate.json5 updates this release and both architecture checksums together.
     private const string Version = "10.0.0.0p2-Preview";
     private const string ReleaseBase =
         "https://github.com/PowerShell/Win32-OpenSSH/releases/download/" + Version;
