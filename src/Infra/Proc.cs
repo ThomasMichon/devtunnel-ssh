@@ -53,7 +53,11 @@ internal static class Proc
     // Spawns a long-running child process, streaming its stderr to our stderr with
     // a prefix (used for the dedicated sshd). The returned Process is owned by the
     // caller, which must kill it on shutdown.
-    public static Process Spawn(string file, IReadOnlyList<string> args, string stderrPrefix)
+    public static Process Spawn(
+        string file,
+        IReadOnlyList<string> args,
+        string stderrPrefix,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var psi = new ProcessStartInfo(file)
         {
@@ -61,6 +65,9 @@ internal static class Proc
             UseShellExecute = false,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
+        if (environment is not null)
+            foreach (var (key, value) in environment)
+                psi.Environment[key] = value;
 
         Log.Debugf("spawn: {0} {1}", file, string.Join(' ', args));
         var p = new Process { StartInfo = psi };

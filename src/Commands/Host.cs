@@ -66,7 +66,7 @@ internal static class HostCommand
             var hk = await KeyStore.EnsureHostKeyAsync(ct: ct).ConfigureAwait(false);
             hostPub = hk.ReadPublicKey();
             var (file, sargs) = cfg.Command();
-            sshdProc = Proc.Spawn(file, sargs, "[sshd] ");
+            sshdProc = Proc.Spawn(file, sargs, "[sshd] ", cfg.Environment);
             Console.Error.WriteLine($"dtssh: dedicated sshd listening on 127.0.0.1:{port}");
             if (!await Cli.WaitPortAsync(port, TimeSpan.FromSeconds(5), ct).ConfigureAwait(false))
             {

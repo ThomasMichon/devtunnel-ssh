@@ -18,6 +18,7 @@ internal sealed class Sshd
     public string ConfigOut { get; init; } = "";
     public string BinaryPath { get; init; } = "";
     public string? SftpServerPath { get; init; }
+    public IReadOnlyDictionary<string, string>? Environment { get; init; }
 
     private static readonly string[] SftpCandidates =
     {
@@ -56,6 +57,15 @@ internal sealed class Sshd
             ConfigOut = Path.Combine(Paths.HostDir(), "sshd_config"),
             BinaryPath = binary,
             SftpServerPath = portable?.SftpServerPath ?? FindSftpServer(),
+            Environment = portable is null
+                ? null
+                : new Dictionary<string, string>
+                {
+                    // https://github.com/PowerShell/openssh-portable/blob/2143eae435e3ed93e73426d9138684f98468f6a7/contrib/win32/win32compat/w32fd.c#L1137-L1142
+                    // Win32-OpenSSH applies CREATE_NO_WINDOW when this flag is set
+                    // This prevents the sshd process from creating a console window
+                    ["SSH_TEST_ENVIRONMENT"] = "1"
+                },
         };
 
         var b = new StringBuilder();
