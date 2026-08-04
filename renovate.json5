@@ -1,0 +1,97 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended"],
+  dependencyDashboard: true,
+  enabledManagers: ["nuget", "github-actions", "custom.regex"],
+  labels: ["dependencies"],
+  prConcurrentLimit: 10,
+  schedule: ["before 6am on Monday"],
+  semanticCommits: "enabled",
+  semanticCommitType: "chore",
+  semanticCommitScope: "deps",
+
+  packageRules: [
+    {
+      description: "Group NuGet updates",
+      matchManagers: ["nuget"],
+      groupName: "NuGet dependencies",
+    },
+    {
+      description: "Group GitHub Actions updates",
+      matchManagers: ["github-actions"],
+      groupName: "GitHub Actions",
+    },
+    {
+      description: "Group the portable OpenSSH release and asset checksums",
+      matchDatasources: [
+        "custom.win32-openssh-win64",
+        "custom.win32-openssh-arm64",
+      ],
+      groupName: "portable Win32 OpenSSH",
+      groupSlug: "portable-win32-openssh",
+    },
+  ],
+
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Update the .NET SDK release channel used by setup-dotnet",
+      managerFilePatterns: ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      matchStrings: [
+        "dotnet-version:\\s*[\"'](?<currentValue>\\d+\\.\\d+)\\.x[\"']",
+      ],
+      depNameTemplate: ".NET SDK",
+      packageNameTemplate: "dotnet-sdk",
+      datasourceTemplate: "custom.dotnet-release-channels",
+      versioningTemplate: "loose",
+    },
+    {
+      customType: "regex",
+      description: "Update portable OpenSSH Win64 release and checksum",
+      managerFilePatterns: ["/^src/Ssh/PortableSshd\\.cs$/"],
+      matchStrings: [
+        "private const string Version = \"(?<currentValue>[^\"]+)\";[\\s\\S]*?\\[Architecture\\.X64\\] = new\\([\\s\\S]*?\"OpenSSH-Win64\\.zip\",\\s*\"(?<currentDigest>[a-f0-9]{64})\"\\)",
+      ],
+      depNameTemplate: "Win32 OpenSSH (Win64)",
+      packageNameTemplate: "PowerShell/Win32-OpenSSH",
+      datasourceTemplate: "custom.win32-openssh-win64",
+      versioningTemplate: "loose",
+    },
+    {
+      customType: "regex",
+      description: "Update portable OpenSSH ARM64 release and checksum",
+      managerFilePatterns: ["/^src/Ssh/PortableSshd\\.cs$/"],
+      matchStrings: [
+        "private const string Version = \"(?<currentValue>[^\"]+)\";[\\s\\S]*?\\[Architecture\\.Arm64\\] = new\\([\\s\\S]*?\"OpenSSH-ARM64\\.zip\",\\s*\"(?<currentDigest>[a-f0-9]{64})\"\\)",
+      ],
+      depNameTemplate: "Win32 OpenSSH (ARM64)",
+      packageNameTemplate: "PowerShell/Win32-OpenSSH",
+      datasourceTemplate: "custom.win32-openssh-arm64",
+      versioningTemplate: "loose",
+    },
+  ],
+
+  customDatasources: {
+    "dotnet-release-channels": {
+      defaultRegistryUrlTemplate:
+        "https://builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json",
+      transformTemplates: [
+        "{\"releases\": $map($lookup($, 'releases-index')[$lookup($, 'support-phase') != 'preview'], function($release) { {\"version\": $lookup($release, 'channel-version'), \"releaseTimestamp\": $lookup($release, 'latest-release-date'), \"sourceUrl\": \"https://github.com/dotnet/sdk\"} }), \"sourceUrl\": \"https://github.com/dotnet/sdk\"}",
+      ],
+    },
+    "win32-openssh-win64": {
+      defaultRegistryUrlTemplate:
+        "https://api.github.com/repos/PowerShell/Win32-OpenSSH/releases?per_page=100",
+      transformTemplates: [
+        "{\"releases\": [$map($[draft = false and assets[name = 'OpenSSH-Win64.zip'].digest != null], function($release) { {\"version\": $release.tag_name, \"releaseTimestamp\": $release.published_at, \"changelogUrl\": $release.html_url, \"sourceUrl\": \"https://github.com/PowerShell/Win32-OpenSSH\", \"digest\": $substring($string($release.assets[name = 'OpenSSH-Win64.zip'].digest), 7)} })], \"sourceUrl\": \"https://github.com/PowerShell/Win32-OpenSSH\"}",
+      ],
+    },
+    "win32-openssh-arm64": {
+      defaultRegistryUrlTemplate:
+        "https://api.github.com/repos/PowerShell/Win32-OpenSSH/releases?per_page=100",
+      transformTemplates: [
+        "{\"releases\": [$map($[draft = false and assets[name = 'OpenSSH-ARM64.zip'].digest != null], function($release) { {\"version\": $release.tag_name, \"releaseTimestamp\": $release.published_at, \"changelogUrl\": $release.html_url, \"sourceUrl\": \"https://github.com/PowerShell/Win32-OpenSSH\", \"digest\": $substring($string($release.assets[name = 'OpenSSH-ARM64.zip'].digest), 7)} })], \"sourceUrl\": \"https://github.com/PowerShell/Win32-OpenSSH\"}",
+      ],
+    },
+  },
+}
