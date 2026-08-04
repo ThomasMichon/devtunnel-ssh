@@ -22,8 +22,8 @@ internal static class Program
 
         if (args.Length < 1)
         {
-            // When wired in as the OpenSSH DefaultShell (opt-in `dtssh shell
-            // install`), sshd invokes us BARE — no subcommand, no command option —
+            // When wired in as the OpenSSH DefaultShell (opt-in; see `dtssh shell
+            // --help`), sshd invokes us BARE — no subcommand, no command option —
             // for an INTERACTIVE session (it only appends DefaultShellCommandOption
             // for exec/`ssh host "cmd"`). Route that to the headless shell shim so
             // the real interactive shell launches. A bare `dtssh` at a terminal

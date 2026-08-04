@@ -26,13 +26,15 @@ namespace Dtssh.Commands;
 //
 //   dtssh shell -c "<command>"   → hide console, run "<real-shell> -c <command>"
 //   dtssh shell                  → hide console, run the real shell interactively
-//   dtssh shell install          → wire it up as the OpenSSH DefaultShell (admin)
-//   dtssh shell uninstall        → restore the previous DefaultShell (admin)
-//   dtssh shell status           → show current wiring
+//   dtssh shell status           → show the current DefaultShell wiring (read-only)
 //
-// It is OPT-IN and off by default: `install` writes the machine-global
-// HKLM\SOFTWARE\OpenSSH DefaultShell (which also affects the system sshd on :22),
-// needs elevation, and only benefits non-PTY exec.
+// WIRING IS THE OPERATOR'S STEP. `DefaultShell` is a machine-global,
+// registry-only knob (Win32 OpenSSH reads HKLM\SOFTWARE\OpenSSH\DefaultShell —
+// there is no sshd_config/authorized_keys equivalent), it also affects the
+// system sshd on :22, and it needs elevation. dtssh therefore does NOT write it:
+// wiring the shim in is a one-time operator action (see `dtssh shell --help`),
+// and `status` only reads the current values. Only non-PTY exec benefits, so the
+// whole thing is opt-in.
 internal static class ShellCommand
 {
     private const string OpenSshKey = @"HKLM\SOFTWARE\OpenSSH";
@@ -46,9 +48,7 @@ internal static class ShellCommand
             switch (args[0])
             {
                 case "-h" or "--help" or "help": PrintUsage(); return 0;
-                case "install": return await InstallAsync(clear: false);
-                case "uninstall": return await InstallAsync(clear: true);
-                case "status": return await StatusAsync();
+                case "status": return await StatusAsync().ConfigureAwait(false);
             }
         }
 
@@ -76,9 +76,9 @@ internal static class ShellCommand
         }
     }
 
-    // sshd invokes `<DefaultShell> <DefaultShellCommandOption> "<command>"`. We wire
-    // the option to "shell", so we arrive as `dtssh shell "<command>"` (command in
-    // args[0]). Also accept an explicit `-c <command>` for manual invocation.
+    // sshd invokes `<DefaultShell> <DefaultShellCommandOption> "<command>"`. With
+    // the option wired to "shell", we arrive as `dtssh shell "<command>"` (command
+    // in args[0]). Also accept an explicit `-c <command>` for manual invocation.
     private static string ExtractCommand(string[] args)
     {
         if (args.Length == 0) return "";
@@ -87,18 +87,10 @@ internal static class ShellCommand
         return string.Join(' ', args);
     }
 
-    // The shell to forward to: the DefaultShell captured at `install` time (so the
-    // shim is transparent to whatever the machine had), falling back to pwsh then
-    // cmd on Windows, or $SHELL/sh elsewhere. Returns (shellPath, commandOption).
+    // The shell to forward to: pwsh (then powershell, then cmd) on Windows, or
+    // $SHELL/sh elsewhere. Returns (shellPath, commandOption).
     private static (string shell, string option) ResolveRealShell()
     {
-        var saved = ReadSavedPrevious();
-        if (saved is { } prev && !string.IsNullOrEmpty(prev.shell) &&
-            !prev.shell.Equals(SelfPath(), StringComparison.OrdinalIgnoreCase))
-        {
-            return (prev.shell, string.IsNullOrEmpty(prev.option) ? DefaultOptionFor(prev.shell) : prev.option);
-        }
-
         if (OperatingSystem.IsWindows())
         {
             var pwsh = Proc.Which("pwsh") ?? Proc.Which("powershell");
@@ -109,12 +101,6 @@ internal static class ShellCommand
 
         var sh = Environment.GetEnvironmentVariable("SHELL");
         return (string.IsNullOrEmpty(sh) ? "/bin/sh" : sh, "-c");
-    }
-
-    private static string DefaultOptionFor(string shell)
-    {
-        var name = Path.GetFileNameWithoutExtension(shell).ToLowerInvariant();
-        return name is "cmd" ? "/c" : "-c";
     }
 
     // ── Console hiding (Windows only) ────────────────────────────────────────
@@ -143,54 +129,7 @@ internal static class ShellCommand
         public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     }
 
-    // ── install / uninstall / status ─────────────────────────────────────────
-
-    private static async Task<int> InstallAsync(bool clear)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            Console.Error.WriteLine("dtssh shell install: Windows-only (no console-window problem elsewhere).");
-            return 1;
-        }
-
-        if (clear)
-        {
-            var prev = ReadSavedPrevious();
-            if (prev is { } p)
-            {
-                var rc = await ApplyDefaultShellAsync(p.shell, p.option).ConfigureAwait(false);
-                if (rc != 0) return rc;
-                DeleteSavedPrevious();
-                Console.Error.WriteLine("dtssh shell: restored the previous OpenSSH DefaultShell.");
-            }
-            else
-            {
-                var rc = await ClearValueAsync(DefaultShellValue).ConfigureAwait(false);
-                _ = await ClearValueAsync(DefaultShellOptionValue).ConfigureAwait(false);
-                if (rc != 0) return rc;
-                Console.Error.WriteLine("dtssh shell: cleared the OpenSSH DefaultShell (back to the OpenSSH default).");
-            }
-            return 0;
-        }
-
-        var self = SelfPath();
-        var (curShell, curOption) = await ReadCurrentAsync().ConfigureAwait(false);
-        if (curShell.Equals(self, StringComparison.OrdinalIgnoreCase))
-        {
-            Console.Error.WriteLine("dtssh shell: already installed as the OpenSSH DefaultShell.");
-            return 0;
-        }
-
-        // Capture the current DefaultShell so `uninstall` can restore it exactly.
-        SaveSavedPrevious(curShell, curOption);
-
-        var apply = await ApplyDefaultShellAsync(self, "shell").ConfigureAwait(false);
-        if (apply != 0) { DeleteSavedPrevious(); return apply; }
-
-        Console.Error.WriteLine($"dtssh shell: installed as the OpenSSH DefaultShell ({self} shell).");
-        Console.Error.WriteLine("dtssh shell: note — this is machine-global (also affects the system sshd on :22); no sshd restart is needed.");
-        return 0;
-    }
+    // ── status (read-only) ───────────────────────────────────────────────────
 
     private static async Task<int> StatusAsync()
     {
@@ -205,45 +144,10 @@ internal static class ShellCommand
         Console.WriteLine($"DefaultShell              = {(string.IsNullOrEmpty(shell) ? "(unset — OpenSSH default)" : shell)}");
         Console.WriteLine($"DefaultShellCommandOption = {(string.IsNullOrEmpty(option) ? "(unset)" : option)}");
         Console.WriteLine($"dtssh headless shim       = {(active ? "ACTIVE" : "not active")}");
-        var prev = ReadSavedPrevious();
-        if (prev is { } p)
-            Console.WriteLine($"saved previous shell      = {(string.IsNullOrEmpty(p.shell) ? "(was unset)" : p.shell)} {p.option}");
         return 0;
     }
 
-    // ── registry via reg.exe (AOT-trivial; no Microsoft.Win32.Registry dep) ──
-
-    private static async Task<int> ApplyDefaultShellAsync(string shell, string option)
-    {
-        if (string.IsNullOrEmpty(shell))
-        {
-            var rc = await ClearValueAsync(DefaultShellValue).ConfigureAwait(false);
-            _ = await ClearValueAsync(DefaultShellOptionValue).ConfigureAwait(false);
-            return rc;
-        }
-        var s = await SetValueAsync(DefaultShellValue, shell).ConfigureAwait(false);
-        if (s != 0) return s;
-        return string.IsNullOrEmpty(option)
-            ? await ClearValueAsync(DefaultShellOptionValue).ConfigureAwait(false)
-            : await SetValueAsync(DefaultShellOptionValue, option).ConfigureAwait(false);
-    }
-
-    private static async Task<int> SetValueAsync(string name, string data)
-    {
-        var r = await Proc.RunAsync("reg.exe",
-            new[] { "add", OpenSshKey, "/v", name, "/t", "REG_SZ", "/d", data, "/f" }).ConfigureAwait(false);
-        if (r.Ok) return 0;
-        return ReportRegFailure(r);
-    }
-
-    private static async Task<int> ClearValueAsync(string name)
-    {
-        var r = await Proc.RunAsync("reg.exe",
-            new[] { "delete", OpenSshKey, "/v", name, "/f" }).ConfigureAwait(false);
-        // Deleting an absent value returns non-zero; treat "not found" as success.
-        if (r.Ok || r.Stderr.Contains("unable to find", StringComparison.OrdinalIgnoreCase)) return 0;
-        return ReportRegFailure(r);
-    }
+    // ── registry reads via reg.exe (AOT-trivial; no Microsoft.Win32.Registry dep) ──
 
     private static async Task<(string shell, string option)> ReadCurrentAsync()
         => (await QueryValueAsync(DefaultShellValue).ConfigureAwait(false),
@@ -265,49 +169,6 @@ internal static class ShellCommand
         return "";
     }
 
-    private static int ReportRegFailure(ProcResult r)
-    {
-        var msg = r.StderrTrim.Length > 0 ? r.StderrTrim : r.StdoutTrim;
-        if (msg.Contains("denied", StringComparison.OrdinalIgnoreCase) || msg.Contains("requires elevation", StringComparison.OrdinalIgnoreCase))
-        {
-            Console.Error.WriteLine("dtssh shell: writing HKLM\\SOFTWARE\\OpenSSH requires an elevated (Administrator) shell.");
-            return 1;
-        }
-        Console.Error.WriteLine($"dtssh shell: registry update failed: {msg}");
-        return 1;
-    }
-
-    // ── previous-DefaultShell state (so uninstall restores it exactly) ───────
-
-    private static string SavedPreviousPath() => Path.Combine(Paths.HostDir(), "default-shell.prev");
-
-    private static void SaveSavedPrevious(string shell, string option)
-    {
-        try
-        {
-            Paths.EnsureDir(Paths.HostDir());
-            File.WriteAllText(SavedPreviousPath(), shell + "\n" + option + "\n");
-        }
-        catch (Exception e) { Console.Error.WriteLine($"dtssh shell: warning: could not record previous shell: {e.Message}"); }
-    }
-
-    private static (string shell, string option)? ReadSavedPrevious()
-    {
-        try
-        {
-            var p = SavedPreviousPath();
-            if (!File.Exists(p)) return null;
-            var lines = File.ReadAllLines(p);
-            return (lines.Length > 0 ? lines[0].Trim() : "", lines.Length > 1 ? lines[1].Trim() : "");
-        }
-        catch { return null; }
-    }
-
-    private static void DeleteSavedPrevious()
-    {
-        try { File.Delete(SavedPreviousPath()); } catch { /* best-effort */ }
-    }
-
     // Absolute path to this dtssh executable (what sshd will invoke as the shell).
     private static string SelfPath() => Environment.ProcessPath ?? "dtssh";
 
@@ -321,14 +182,22 @@ session. Interactive/PTY sessions (a plain shell, VS Code Remote-SSH) are
 unaffected.
 
 USAGE:
-    dtssh shell install      wire dtssh in as the OpenSSH DefaultShell (needs admin)
-    dtssh shell uninstall    restore the previous DefaultShell (needs admin)
-    dtssh shell status       show the current DefaultShell wiring
+    dtssh shell status       show the current DefaultShell wiring (read-only)
     dtssh shell -c "<cmd>"   (shim) hide console, forward "<cmd>" to the real shell
 
-`install` writes HKLM\SOFTWARE\OpenSSH\DefaultShell = "<dtssh> shell" and
-DefaultShellCommandOption = "shell". This is machine-global (it also affects the
-system sshd on :22) and only benefits non-PTY exec, so it is opt-in.
+WIRING (one-time, operator-run, elevated). dtssh does not write the registry.
+Point the OpenSSH DefaultShell at this dtssh, with the command option "shell",
+from an elevated shell:
+
+    reg add "HKLM\SOFTWARE\OpenSSH" /v DefaultShell ^
+        /t REG_SZ /d "<full-path-to-dtssh.exe>" /f
+    reg add "HKLM\SOFTWARE\OpenSSH" /v DefaultShellCommandOption ^
+        /t REG_SZ /d "shell" /f
+
+This is machine-global (it also affects the system sshd on :22) and only benefits
+non-PTY exec, so it is opt-in. To undo, restore DefaultShell to its previous value
+(or delete the value to fall back to the OpenSSH default). `dtssh shell status`
+reports the current wiring; no sshd restart is needed after changing it.
 
 """);
 }
