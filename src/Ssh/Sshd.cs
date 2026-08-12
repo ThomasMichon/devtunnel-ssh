@@ -89,6 +89,19 @@ internal sealed class Sshd
         b.Append("AllowTcpForwarding yes\n");
         b.Append("PrintMotd no\n");
         b.Append("LogLevel VERBOSE\n");
+        // Connection hygiene so a build-up of half-open / idle pre-auth
+        // connections can't wedge the dedicated sshd. With OpenSSH's defaults
+        // (MaxStartups 10:30:100, LoginGraceTime 120), unauthenticated
+        // connections that never complete — e.g. relay/keepalive probes or a
+        // flaky tunnel reconnecting — accumulate until MaxStartups is saturated,
+        // after which sshd silently drops NEW handshakes *before the banner*: the
+        // port still accepts TCP but every `ssh` closes pre-auth, with no error.
+        // Prune stragglers quickly (short LoginGraceTime), tolerate bursts (higher
+        // MaxStartups), and reap dead authenticated sessions (ClientAlive*).
+        b.Append("MaxStartups 100:30:200\n");
+        b.Append("LoginGraceTime 30\n");
+        b.Append("ClientAliveInterval 60\n");
+        b.Append("ClientAliveCountMax 3\n");
         if (cfg.SftpServerPath is not null)
             b.Append($"Subsystem sftp {QuoteConfigValue(cfg.SftpServerPath)}\n");
         WriteRestricted(cfg.ConfigOut, b.ToString());
