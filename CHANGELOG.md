@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. This file is generated
 from [Conventional Commits](https://www.conventionalcommits.org) by
 [git-cliff](https://git-cliff.org).
+## [0.2.1] ([compare](https://github.com/bmiddha/devtunnel-ssh/compare/v0.2.0...v0.2.1)) - 2026-08-31
+
+### 🐛 Bug Fixes
+
+- *(proxy)* Close leaked relay sessions ([d1c3f3c](https://github.com/bmiddha/devtunnel-ssh/commit/d1c3f3cb71b5fd79883995d8d07f96f033e2105b))
+
+
 ## [0.2.0] ([compare](https://github.com/bmiddha/devtunnel-ssh/compare/v0.1.0...v0.2.0)) - 2026-08-04
 
 ### 🚀 Features

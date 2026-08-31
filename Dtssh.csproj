@@ -13,7 +13,7 @@
          assembly's InformationalVersion attribute (read in Program.Version). The
          release workflow (.github/workflows/release.yml) bumps only this. The git
          short SHA is appended (see SetGitRevision below) => "0.0.0+a1b2c3d4". -->
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <!-- We build InformationalVersion ourselves (Version + short git SHA) in the
          SetGitRevision target, so stop the SDK appending its own full-SHA suffix. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
