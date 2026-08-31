@@ -57,7 +57,7 @@ internal static class ProxyCommand
         var mgmt = Relay.ManagementClient();
         var tunnel = await Relay.FetchTunnelAsync(mgmt, tunnelId, token, "connect", ct).ConfigureAwait(false);
 
-        var client = new TunnelRelayTunnelClient(mgmt, trace)
+        await using var client = new TunnelRelayTunnelClient(mgmt, trace)
         {
             // We stream the port directly into ssh's stdio; no local TCP listener.
             AcceptLocalConnectionsForForwardedPorts = false,
@@ -94,13 +94,49 @@ internal static class ProxyCommand
         return 0;
     }
 
-    // Copies stdin->remote and remote->stdout concurrently, returning as soon as
-    // either direction ends (ssh closed its side, or the remote closed).
+    // Copies stdin->remote and remote->stdout concurrently. Once either side
+    // closes, stop the other pump and close the forwarded stream before the
+    // relay client is disposed. Without this bounded teardown, completed
+    // ProxyCommand processes can leave their host-side forwarded sockets alive.
     private static async Task PumpAsync(Stream stdin, Stream stdout, Stream remote)
     {
-        var up = stdin.CopyToAsync(remote);
-        var down = remote.CopyToAsync(stdout);
-        await Task.WhenAny(up, down).ConfigureAwait(false);
+        using var cts = new CancellationTokenSource();
+        var up = stdin.CopyToAsync(remote, cts.Token);
+        var down = remote.CopyToAsync(stdout, cts.Token);
+        var completed = await Task.WhenAny(up, down).ConfigureAwait(false);
+
+        try
+        {
+            await completed.ConfigureAwait(false);
+        }
+        finally
+        {
+            await cts.CancelAsync().ConfigureAwait(false);
+            await remote.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await Task.WhenAll(up, down)
+                    .WaitAsync(TimeSpan.FromSeconds(2))
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                // Expected for the pump that did not finish first.
+            }
+            catch (IOException)
+            {
+                // Expected when stream disposal releases a blocked pipe read/write.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Expected when stream disposal wins the cancellation race.
+            }
+            catch (TimeoutException)
+            {
+                // Some console handles do not observe cancellation; relay/client
+                // disposal below is the final bounded teardown.
+            }
+        }
     }
 
     private static async Task ConnectWithRetryAsync(TcpClient tcp, string host, int port, TimeSpan timeout)
