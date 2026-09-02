@@ -40,7 +40,8 @@ internal static class ProxyCommand
     private static async Task<int> TunnelBridgeAsync(
         string tunnelId, int port, string token, Stream stdin, Stream stdout)
     {
-        var ct = CancellationToken.None;
+        using var setupCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var ct = setupCts.Token;
 
         // Self-heal the pinned host key from the authoritative account metadata
         // before connecting, so a host that rotated its key still connects. Each
@@ -50,36 +51,45 @@ internal static class ProxyCommand
         // round-trip. Best-effort — never blocks the connection.
         await Discovery.HostKey.ReconcileAsync(tunnelId, cold: false, ct).ConfigureAwait(false);
 
-        if (string.IsNullOrEmpty(token))
-            token = await DevtunnelCli.IssueTokenAsync(tunnelId, "connect", ct).ConfigureAwait(false);
-
-        var trace = Relay.Trace();
-        var mgmt = Relay.ManagementClient();
-        var tunnel = await Relay.FetchTunnelAsync(mgmt, tunnelId, token, "connect", ct).ConfigureAwait(false);
-
-        await using var client = new TunnelRelayTunnelClient(mgmt, trace)
+        try
         {
-            // We stream the port directly into ssh's stdio; no local TCP listener.
-            AcceptLocalConnectionsForForwardedPorts = false,
-        };
-        // Re-mint the connect token from the CLI when it nears expiry so long
-        // interactive sessions survive token rotation without dropping.
-        client.RefreshingTunnelAccessToken += (_, e) => Relay.OnRefreshToken(e, tunnelId);
+            if (string.IsNullOrEmpty(token))
+                token = await DevtunnelCli.IssueTokenAsync(tunnelId, "connect", ct).ConfigureAwait(false);
 
-        var options = new TunnelConnectionOptions { EnableReconnect = true, EnableRetry = true };
-        Log.Debugf("proxy: connecting tunnel {0} port {1}", tunnelId, port);
-        await client.ConnectAsync(tunnel, options, ct).ConfigureAwait(false);
-        await client.WaitForForwardedPortAsync(port, ct).ConfigureAwait(false);
+            var trace = Relay.Trace();
+            var mgmt = Relay.ManagementClient();
+            var tunnel = await Relay.FetchTunnelAsync(mgmt, tunnelId, token, "connect", ct).ConfigureAwait(false);
 
-        var stream = await client.ConnectToForwardedPortAsync(port, ct).ConfigureAwait(false)
-            ?? throw new DtsshException($"forwarded port {port} not available on tunnel {tunnelId}");
+            await using var client = new TunnelRelayTunnelClient(mgmt, trace)
+            {
+                // We stream the port directly into ssh's stdio; no local TCP listener.
+                AcceptLocalConnectionsForForwardedPorts = false,
+            };
+            // Re-mint the connect token from the CLI when it nears expiry so long
+            // interactive sessions survive token rotation without dropping.
+            client.RefreshingTunnelAccessToken += (_, e) => Relay.OnRefreshToken(e, tunnelId);
 
-        Log.Debugf("proxy: bridging stdio to forwarded port {0}", port);
-        await using (stream)
-        {
-            await PumpAsync(stdin, stdout, stream).ConfigureAwait(false);
+            var options = new TunnelConnectionOptions { EnableReconnect = true, EnableRetry = true };
+            Log.Debugf("proxy: connecting tunnel {0} port {1}", tunnelId, port);
+            await client.ConnectAsync(tunnel, options, ct).ConfigureAwait(false);
+            await client.WaitForForwardedPortAsync(port, ct).ConfigureAwait(false);
+
+            var stream = await client.ConnectToForwardedPortAsync(port, ct).ConfigureAwait(false)
+                ?? throw new DtsshException($"forwarded port {port} not available on tunnel {tunnelId}");
+
+            setupCts.CancelAfter(Timeout.InfiniteTimeSpan);
+            Log.Debugf("proxy: bridging stdio to forwarded port {0}", port);
+            await using (stream)
+            {
+                await PumpAsync(stdin, stdout, stream).ConfigureAwait(false);
+            }
+            return 0;
         }
-        return 0;
+        catch (OperationCanceledException) when (setupCts.IsCancellationRequested)
+        {
+            throw new DtsshException(
+                $"timed out preparing tunnel {tunnelId} port {port} after 60 seconds");
+        }
     }
 
     private static async Task<int> DirectBridgeAsync(string hostPort)

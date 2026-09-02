@@ -35,7 +35,16 @@ internal static class Proc
         p.Start();
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
-        await p.WaitForExitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKillTree(p);
+            await p.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
         return new ProcResult(p.ExitCode, sb.ToString(), eb.ToString());
     }
 
@@ -47,8 +56,30 @@ internal static class Proc
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = new Process { StartInfo = psi };
         p.Start();
-        await p.WaitForExitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await p.WaitForExitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKillTree(p);
+            await p.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
         return p.ExitCode;
+    }
+
+    private static void TryKillTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between the HasExited check and Kill.
+        }
     }
 
     // Spawns a long-running child process, streaming its stderr to our stderr with
