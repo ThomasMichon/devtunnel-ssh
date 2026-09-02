@@ -16,6 +16,9 @@ internal sealed class Sshd
     public string AuthKeys { get; init; } = "";
     public string PidFile { get; init; } = "";
     public string ConfigOut { get; init; } = "";
+    public string BinaryPath { get; init; } = "";
+    public string? SftpServerPath { get; init; }
+    public IReadOnlyDictionary<string, string>? Environment { get; init; }
 
     private static readonly string[] SftpCandidates =
     {
@@ -35,7 +38,12 @@ internal sealed class Sshd
     public static async Task<Sshd> PrepareAsync(int port, string clientPubKey, CancellationToken ct = default)
     {
         Paths.EnsureDir(Paths.HostDir());
-        var hostKey = await KeyStore.EnsureHostKeyAsync(ct).ConfigureAwait(false);
+        var portable = OperatingSystem.IsWindows()
+            ? await PortableSshdInstaller.EnsureAsync(ct).ConfigureAwait(false)
+            : null;
+        var binary = portable?.SshdPath ?? SshdPath();
+        var hostKey = await KeyStore.EnsureHostKeyAsync(portable?.SshKeygenPath, ct)
+            .ConfigureAwait(false);
 
         var authKeys = Path.Combine(Paths.HostDir(), "authorized_keys");
         WriteRestricted(authKeys, clientPubKey.Trim() + "\n");
@@ -47,6 +55,17 @@ internal sealed class Sshd
             AuthKeys = authKeys,
             PidFile = Path.Combine(Paths.HostDir(), "sshd.pid"),
             ConfigOut = Path.Combine(Paths.HostDir(), "sshd_config"),
+            BinaryPath = binary,
+            SftpServerPath = portable?.SftpServerPath ?? FindSftpServer(),
+            Environment = portable is null
+                ? null
+                : new Dictionary<string, string>
+                {
+                    // https://github.com/PowerShell/openssh-portable/blob/2143eae435e3ed93e73426d9138684f98468f6a7/contrib/win32/win32compat/w32fd.c#L1137-L1142
+                    // Win32-OpenSSH applies CREATE_NO_WINDOW when this flag is set
+                    // This prevents the sshd process from creating a console window
+                    ["SSH_TEST_ENVIRONMENT"] = "1"
+                },
         };
 
         var b = new StringBuilder();
@@ -54,9 +73,9 @@ internal sealed class Sshd
         b.Append($"Port {cfg.Port}\n");
         b.Append("ListenAddress 127.0.0.1\n");
         b.Append("ListenAddress ::1\n");
-        b.Append($"HostKey {cfg.HostKey}\n");
-        b.Append($"PidFile {cfg.PidFile}\n");
-        b.Append($"AuthorizedKeysFile {cfg.AuthKeys}\n");
+        b.Append($"HostKey {QuoteConfigValue(cfg.HostKey)}\n");
+        b.Append($"PidFile {QuoteConfigValue(cfg.PidFile)}\n");
+        b.Append($"AuthorizedKeysFile {QuoteConfigValue(cfg.AuthKeys)}\n");
         b.Append("PubkeyAuthentication yes\n");
         b.Append("PasswordAuthentication no\n");
         b.Append("KbdInteractiveAuthentication no\n");
@@ -68,13 +87,23 @@ internal sealed class Sshd
         b.Append("X11Forwarding no\n");
         b.Append("AllowAgentForwarding yes\n");
         b.Append("AllowTcpForwarding yes\n");
-        b.Append("ClientAliveInterval 30\n");
-        b.Append("ClientAliveCountMax 2\n");
         b.Append("PrintMotd no\n");
         b.Append("LogLevel VERBOSE\n");
-        var sftp = FindSftpServer();
-        if (sftp is not null) b.Append($"Subsystem sftp {sftp}\n");
-
+        // Connection hygiene so a build-up of half-open / idle pre-auth
+        // connections can't wedge the dedicated sshd. With OpenSSH's defaults
+        // (MaxStartups 10:30:100, LoginGraceTime 120), unauthenticated
+        // connections that never complete — e.g. relay/keepalive probes or a
+        // flaky tunnel reconnecting — accumulate until MaxStartups is saturated,
+        // after which sshd silently drops NEW handshakes *before the banner*: the
+        // port still accepts TCP but every `ssh` closes pre-auth, with no error.
+        // Prune stragglers quickly (short LoginGraceTime), tolerate bursts (higher
+        // MaxStartups), and reap dead authenticated sessions (ClientAlive*).
+        b.Append("MaxStartups 100:30:200\n");
+        b.Append("LoginGraceTime 30\n");
+        b.Append("ClientAliveInterval 60\n");
+        b.Append("ClientAliveCountMax 3\n");
+        if (cfg.SftpServerPath is not null)
+            b.Append($"Subsystem sftp {QuoteConfigValue(cfg.SftpServerPath)}\n");
         WriteRestricted(cfg.ConfigOut, b.ToString());
         return cfg;
     }
@@ -82,6 +111,14 @@ internal sealed class Sshd
     // Locates the sshd binary.
     public static string SshdPath()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            var installed = PortableSshdInstaller.Installed();
+            if (installed is not null) return installed.SshdPath;
+            throw new DtsshException(
+                "portable OpenSSH is not cached yet; `dtssh host` downloads it automatically");
+        }
+
         var onPath = Proc.Which("sshd");
         if (onPath is not null) return onPath;
         foreach (var c in new[] { "/usr/sbin/sshd", "/usr/local/sbin/sshd", "/opt/homebrew/sbin/sshd" })
@@ -92,13 +129,19 @@ internal sealed class Sshd
     // Validates the generated configuration with `sshd -t`.
     public async Task ValidateAsync(CancellationToken ct = default)
     {
-        var r = await Proc.RunAsync(SshdPath(), new[] { "-t", "-f", ConfigOut }, ct).ConfigureAwait(false);
+        var r = await Proc.RunAsync(BinaryPath, new[] { "-t", "-f", ConfigOut }, ct)
+            .ConfigureAwait(false);
         if (!r.Ok) throw new DtsshException($"sshd config test failed: {r.StderrTrim}{r.StdoutTrim}");
     }
 
     // The sshd argv: foreground (-D), log to stderr (-e), config file (-f) so its
     // lifetime is tied to dtssh.
-    public (string file, string[] args) Command() => (SshdPath(), new[] { "-D", "-e", "-f", ConfigOut });
+    public (string file, string[] args) Command() =>
+        (BinaryPath, new[] { "-D", "-e", "-f", ConfigOut });
+
+    private static string QuoteConfigValue(string value) =>
+        "\"" + value.Replace("\\", "/", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
 
     private static void WriteRestricted(string path, string contents)
     {
