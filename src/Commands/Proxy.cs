@@ -40,7 +40,11 @@ internal static class ProxyCommand
     private static async Task<int> TunnelBridgeAsync(
         string tunnelId, int port, string token, Stream stdin, Stream stdout)
     {
-        using var setupCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var parent = ParentExitMonitor.Start();
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var setupCts = CancellationTokenSource.CreateLinkedTokenSource(
+            parent.Token,
+            timeoutCts.Token);
         var ct = setupCts.Token;
 
         // Self-heal the pinned host key from the authoritative account metadata
@@ -77,15 +81,18 @@ internal static class ProxyCommand
             var stream = await client.ConnectToForwardedPortAsync(port, ct).ConfigureAwait(false)
                 ?? throw new DtsshException($"forwarded port {port} not available on tunnel {tunnelId}");
 
-            setupCts.CancelAfter(Timeout.InfiniteTimeSpan);
             Log.Debugf("proxy: bridging stdio to forwarded port {0}", port);
             await using (stream)
             {
-                await PumpAsync(stdin, stdout, stream).ConfigureAwait(false);
+                await PumpAsync(stdin, stdout, stream, parent.Token).ConfigureAwait(false);
             }
             return 0;
         }
-        catch (OperationCanceledException) when (setupCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (parent.Token.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
             throw new DtsshException(
                 $"timed out preparing tunnel {tunnelId} port {port} after 60 seconds");
@@ -108,9 +115,13 @@ internal static class ProxyCommand
     // closes, stop the other pump and close the forwarded stream before the
     // relay client is disposed. Without this bounded teardown, completed
     // ProxyCommand processes can leave their host-side forwarded sockets alive.
-    private static async Task PumpAsync(Stream stdin, Stream stdout, Stream remote)
+    private static async Task PumpAsync(
+        Stream stdin,
+        Stream stdout,
+        Stream remote,
+        CancellationToken cancellationToken = default)
     {
-        using var cts = new CancellationTokenSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var up = stdin.CopyToAsync(remote, cts.Token);
         var down = remote.CopyToAsync(stdout, cts.Token);
         var completed = await Task.WhenAny(up, down).ConfigureAwait(false);
