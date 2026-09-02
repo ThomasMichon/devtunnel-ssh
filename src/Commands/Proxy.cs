@@ -57,7 +57,7 @@ internal static class ProxyCommand
         var mgmt = Relay.ManagementClient();
         var tunnel = await Relay.FetchTunnelAsync(mgmt, tunnelId, token, "connect", ct).ConfigureAwait(false);
 
-        var client = new TunnelRelayTunnelClient(mgmt, trace)
+        await using var client = new TunnelRelayTunnelClient(mgmt, trace)
         {
             // We stream the port directly into ssh's stdio; no local TCP listener.
             AcceptLocalConnectionsForForwardedPorts = false,
@@ -94,8 +94,9 @@ internal static class ProxyCommand
         return 0;
     }
 
-    // Copies stdin->remote and remote->stdout concurrently, returning as soon as
-    // either direction ends (ssh closed its side, or the remote closed).
+    // Copies stdin->remote and remote->stdout concurrently. The caller disposes
+    // the forwarded stream and relay client as soon as either direction closes,
+    // ensuring completed SSH commands release their relay exit node promptly.
     private static async Task PumpAsync(Stream stdin, Stream stdout, Stream remote)
     {
         var up = stdin.CopyToAsync(remote);

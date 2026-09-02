@@ -68,6 +68,8 @@ internal sealed class Sshd
         b.Append("X11Forwarding no\n");
         b.Append("AllowAgentForwarding yes\n");
         b.Append("AllowTcpForwarding yes\n");
+        b.Append("ClientAliveInterval 30\n");
+        b.Append("ClientAliveCountMax 2\n");
         b.Append("PrintMotd no\n");
         b.Append("LogLevel VERBOSE\n");
         var sftp = FindSftpServer();

@@ -12,7 +12,7 @@ namespace Dtssh.Service;
 //
 //   Linux    systemd user unit    (~/.config/systemd/user/dtssh-host.service)
 //   macOS    launchd LaunchAgent  (~/Library/LaunchAgents/com.bmiddha.dtssh-host.plist)
-//   Windows  Task Scheduler task  (\dtssh-host, logon+boot trigger, restart-on-failure)
+//   Windows  Task Scheduler task  (\dtssh-host, logon trigger, restart-on-failure)
 //
 // No administrator privileges are required. Ported from the Go internal/service.
 internal sealed record ServiceConfig(string Exe, IReadOnlyList<string> HostArgs, IReadOnlyList<string> Env);
@@ -267,7 +267,11 @@ internal sealed class SchtasksManager : IServiceManager
         var command = argv[0];
         var arguments = string.Join(' ', argv.Skip(1).Select(QuoteIfSpace));
         var logFile = ServiceManager.LogPath();
-        var wrapped = $"/c \"{QuoteIfSpace(command)} {arguments} >> \"{logFile}\" 2>&1\"";
+        var wrapped = $"/d /s /c \"{QuoteIfSpace(command)} {arguments} >> \"{logFile}\" 2>&1\"";
+        var conhost = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "System32",
+            "conhost.exe");
 
         var b = new StringBuilder();
         b.Append("<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n");
@@ -277,7 +281,6 @@ internal sealed class SchtasksManager : IServiceManager
         b.Append("  </RegistrationInfo>\n");
         b.Append("  <Triggers>\n");
         b.Append("    <LogonTrigger>\n      <Enabled>true</Enabled>\n    </LogonTrigger>\n");
-        b.Append("    <BootTrigger>\n      <Enabled>true</Enabled>\n    </BootTrigger>\n");
         b.Append("  </Triggers>\n");
         b.Append("  <Principals>\n");
         b.Append("    <Principal id=\"Author\">\n");
@@ -301,8 +304,8 @@ internal sealed class SchtasksManager : IServiceManager
         b.Append("  </Settings>\n");
         b.Append("  <Actions Context=\"Author\">\n");
         b.Append("    <Exec>\n");
-        b.Append("      <Command>cmd.exe</Command>\n");
-        b.Append($"      <Arguments>{Svc.XmlEsc(wrapped)}</Arguments>\n");
+        b.Append($"      <Command>{Svc.XmlEsc(conhost)}</Command>\n");
+        b.Append($"      <Arguments>{Svc.XmlEsc("--headless cmd.exe " + wrapped)}</Arguments>\n");
         b.Append("    </Exec>\n");
         b.Append("  </Actions>\n");
         b.Append("</Task>\n");
